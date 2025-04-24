@@ -9,6 +9,7 @@ dependencies = [
     "circuitpython-stubs==9.2.5",
     "coverage==7.6.10",
     "pre-commit==4.0.1",
+    "pyright[nodejs]==1.1.399",
     "pytest==8.3.2",
 ]
 
@@ -49,3 +50,16 @@ directory = ".coverage-reports/html"
 
 [tool.coverage.xml]
 output = ".coverage-reports/coverage.xml"
+
+[tool.pyright]
+include = ["main.py", "boot.py", "repl.py", "safemode.py"]
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    ".git",
+    "artifacts",
+    "lib",
+    "typings",
+]
+stubPath = "./typings"
+reportMissingModuleSource = false

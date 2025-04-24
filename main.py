@@ -13,6 +13,7 @@ import time
 
 import digitalio
 import microcontroller
+from busio import SPI
 
 try:
     from board_definitions import proveskit_rp2040_v4 as board
@@ -42,7 +43,7 @@ from version import __version__
 rtc = MicrocontrollerManager()
 
 logger: Logger = Logger(
-    error_counter=Counter(index=register.ERRORCNT, datastore=microcontroller.nvm),
+    error_counter=Counter(index=register.ERRORCNT),
     colorized=False,
 )
 
@@ -66,7 +67,7 @@ try:
     config: Config = Config("config.json")
 
     # TODO(nateinaction): fix spi init
-    spi0 = _spi_init(
+    spi0: SPI = _spi_init(
         logger,
         board.SPI0_SCK,
         board.SPI0_MOSI,
@@ -76,7 +77,7 @@ try:
     radio = RFM9xManager(
         logger,
         config.radio,
-        Flag(index=register.FLAG, bit_index=7, datastore=microcontroller.nvm),
+        Flag(index=register.FLAG, bit_index=7),
         spi0,
         initialize_pin(logger, board.SPI0_CS0, digitalio.Direction.OUTPUT, True),
         initialize_pin(logger, board.RF1_RST, digitalio.Direction.OUTPUT, True),
@@ -153,9 +154,7 @@ try:
 
         f.listen_loiter()
 
-        f.all_face_data()
         watchdog.pet()
-        f.send_face()
 
         f.listen_loiter()
 

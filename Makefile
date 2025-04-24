@@ -1,4 +1,4 @@
-PYSQUARED_VERSION ?= v2.0.0-alpha-25w14-3
+PYSQUARED_VERSION ?= v2.0.0-alpha-25w17
 PYSQUARED ?= git+https://github.com/proveskit/pysquared@$(PYSQUARED_VERSION)
 
 .PHONY: all
@@ -37,6 +37,9 @@ sync-time: uv ## Syncs th time from your computer to the PROVES Kit board
 .PHONY: fmt
 fmt: pre-commit-install ## Lint and format files
 	$(UVX) pre-commit run --all-files
+
+typecheck: .venv download-libraries ## Run type check
+	@$(UV) run -m pyright .
 
 BOARD_MOUNT_POINT ?= ""
 VERSION ?= $(shell git tag --points-at HEAD --sort=-creatordate < /dev/null | head -n 1)
