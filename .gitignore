@@ -9,6 +9,7 @@ coverage-reports/
 tools/
 venv
 **/*.mpy
+firmware.uf2
 
 # libs
 /lib/*
