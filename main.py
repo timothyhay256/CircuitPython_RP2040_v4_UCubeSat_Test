@@ -96,7 +96,7 @@ try:
 
     c = Satellite(logger, config)
 
-    sleep_helper = SleepHelper(c, logger, watchdog)
+    sleep_helper = SleepHelper(c, logger, watchdog, config)
 
     cdh = CommandDataHandler(config, logger, radio)
 
