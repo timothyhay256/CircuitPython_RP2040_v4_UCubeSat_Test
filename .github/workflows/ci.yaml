@@ -28,8 +28,13 @@ jobs:
       - name: Build
         run: |
           make build
-      - name: Archive
+      - name: Archive Flight Software
         uses: actions/upload-artifact@v4
         with:
-          name: proves
-          path: artifacts/proves.zip
+          name: proveskit-flight-software
+          path: artifacts/proves/flight-software
+      - name: Archive Ground Station
+        uses: actions/upload-artifact@v4
+        with:
+          name: proveskit-ground-station
+          path: artifacts/proves/ground-station

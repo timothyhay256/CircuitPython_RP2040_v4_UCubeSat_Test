@@ -9,6 +9,7 @@ Published: Nov 19, 2024
 """
 
 import gc
+import os
 import time
 
 import digitalio
@@ -20,10 +21,8 @@ try:
 except ImportError:
     import board
 
-import os
-
-import lib.pysquared.functions as functions
-import lib.pysquared.nvm.register as register
+from lib.proveskit_rp2040_v4.register import Register
+from lib.pysquared.beacon import Beacon
 from lib.pysquared.cdh import CommandDataHandler
 from lib.pysquared.config.config import Config
 from lib.pysquared.hardware.busio import _spi_init, initialize_i2c_bus
@@ -31,20 +30,25 @@ from lib.pysquared.hardware.digitalio import initialize_pin
 from lib.pysquared.hardware.imu.manager.lsm6dsox import LSM6DSOXManager
 from lib.pysquared.hardware.magnetometer.manager.lis2mdl import LIS2MDLManager
 from lib.pysquared.hardware.radio.manager.rfm9x import RFM9xManager
-from lib.pysquared.logger import Logger
+from lib.pysquared.hardware.radio.packetizer.packet_manager import PacketManager
+from lib.pysquared.logger import Logger, LogLevel
 from lib.pysquared.nvm.counter import Counter
-from lib.pysquared.nvm.flag import Flag
 from lib.pysquared.rtc.manager.microcontroller import MicrocontrollerManager
-from lib.pysquared.satellite import Satellite
 from lib.pysquared.sleep_helper import SleepHelper
 from lib.pysquared.watchdog import Watchdog
 from version import __version__
 
+boot_time: float = time.time()
+
 rtc = MicrocontrollerManager()
 
+(boot_count := Counter(index=Register.boot_count)).increment()
+error_count: Counter = Counter(index=Register.error_count)
+
 logger: Logger = Logger(
-    error_counter=Counter(index=register.ERRORCNT),
+    error_counter=error_count,
     colorized=False,
+    log_level=LogLevel.INFO,
 )
 
 logger.info(
@@ -53,9 +57,8 @@ logger.info(
     software_version=__version__,
 )
 
-loiter_time: int = 5
-
 try:
+    loiter_time: int = 5
     for i in range(loiter_time):
         logger.info(f"Code Starting in {loiter_time-i} seconds")
         time.sleep(1)
@@ -77,10 +80,16 @@ try:
     radio = RFM9xManager(
         logger,
         config.radio,
-        Flag(index=register.FLAG, bit_index=7),
         spi0,
         initialize_pin(logger, board.SPI0_CS0, digitalio.Direction.OUTPUT, True),
         initialize_pin(logger, board.RF1_RST, digitalio.Direction.OUTPUT, True),
+    )
+
+    packet_manager = PacketManager(
+        logger,
+        radio,
+        config.radio.license,
+        0.2,
     )
 
     i2c1 = initialize_i2c_bus(
@@ -94,110 +103,41 @@ try:
 
     imu = LSM6DSOXManager(logger, i2c1, 0x6B)
 
-    c = Satellite(logger, config)
+    sleep_helper = SleepHelper(logger, config, watchdog)
 
-    sleep_helper = SleepHelper(c, logger, watchdog, config)
+    cdh = CommandDataHandler(logger, config, packet_manager)
 
-    cdh = CommandDataHandler(config, logger, radio)
-
-    f = functions.functions(
-        c,
+    beacon = Beacon(
         logger,
-        config,
-        sleep_helper,
-        radio,
-        magnetometer,
+        config.cubesat_name,
+        packet_manager,
+        boot_time,
         imu,
-        watchdog,
-        cdh,
+        magnetometer,
+        radio,
+        error_count,
+        boot_count,
     )
 
-    def initial_boot():
-        watchdog.pet()
-        f.beacon()
-        watchdog.pet()
-        f.listen()
-        watchdog.pet()
-
-    try:
-        c.boot_count.increment()
-
-        logger.info(
+    def nominal_power_loop():
+        logger.debug(
             "FC Board Stats",
             bytes_remaining=gc.mem_free(),
-            boot_number=c.boot_count.get(),
         )
 
-        initial_boot()
+        packet_manager.send(config.radio.license.encode("utf-8"))
 
-    except Exception as e:
-        logger.error("Error in Boot Sequence", e)
+        beacon.send()
 
-    finally:
-        pass
+        cdh.listen_for_commands(10)
 
-    def send_imu_data():
-        logger.info("Looking to get imu data...")
-        IMUData = []
-        watchdog.pet()
-        logger.info("IMU has baton")
-        IMUData = imu.get_gyro_data()
-        watchdog.pet()
-        radio.send(IMUData)
+        sleep_helper.safe_sleep(config.sleep_duration)
 
-    def main():
-        f.beacon()
-
-        f.listen_loiter()
-
-        f.state_of_health()
-
-        f.listen_loiter()
-
-        watchdog.pet()
-
-        f.listen_loiter()
-
-        send_imu_data()
-
-        f.listen_loiter()
-
-        f.joke()
-
-        f.listen_loiter()
-
-    def critical_power_operations():
-        initial_boot()
-        watchdog.pet()
-
-        sleep_helper.long_hibernate()
-
-    def minimum_power_operations():
-        initial_boot()
-        watchdog.pet()
-
-        sleep_helper.short_hibernate()
-
-    ######################### MAIN LOOP ##############################
     try:
+        logger.info("Entering main loop")
         while True:
-            # L0 automatic tasks no matter the battery level
-            c.check_reboot()
-
-            if c.power_mode == "critical":
-                critical_power_operations()
-
-            elif c.power_mode == "minimum":
-                minimum_power_operations()
-
-            elif c.power_mode == "normal":
-                main()
-
-            elif c.power_mode == "maximum":
-                main()
-
-            else:
-                f.listen()
+            # TODO(nateinaction): Modify behavior based on power state
+            nominal_power_loop()
 
     except Exception as e:
         logger.critical("Critical in Main Loop", e)

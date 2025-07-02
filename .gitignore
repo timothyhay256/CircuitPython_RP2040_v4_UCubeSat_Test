@@ -12,5 +12,6 @@ venv
 firmware.uf2
 
 # libs
-/lib/*
-!/lib/requirements.txt
+src/*/lib/*
+!src/*/lib/requirements.txt
+!src/flight-software/lib/proveskit_rp2040_v4/
