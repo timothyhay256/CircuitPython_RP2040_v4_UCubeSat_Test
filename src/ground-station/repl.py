@@ -41,6 +41,7 @@ packet_manager = PacketManager(
     logger,
     radio,
     config.radio.license,
+    Counter(2),
     0.2,
 )
 

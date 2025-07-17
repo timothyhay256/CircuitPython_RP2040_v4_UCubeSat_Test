@@ -89,6 +89,7 @@ try:
         logger,
         radio,
         config.radio.license,
+        Counter(Register.message_count),
         0.2,
     )
 

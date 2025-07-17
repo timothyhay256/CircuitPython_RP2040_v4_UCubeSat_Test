@@ -1,9 +1,9 @@
 {
-  "battery_voltage": 5.2,
   "critical_battery_voltage": 6.6,
   "cubesat_name": "PROVES-MY_SATELLITE_NAME",
   "current_draw": 240.5,
   "debug": true,
+  "degraded_battery_voltage": 5.4,
   "detumble_enable_x": true,
   "detumble_enable_y": true,
   "detumble_enable_z": true,
