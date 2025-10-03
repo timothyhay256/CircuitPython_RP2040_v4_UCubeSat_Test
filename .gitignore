@@ -11,6 +11,7 @@ venv
 **/*.mpy
 typeshed/
 firmware.uf2
+rpi/
 
 # libs
 src/*/lib/*
