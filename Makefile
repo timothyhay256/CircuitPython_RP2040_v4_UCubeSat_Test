@@ -63,6 +63,12 @@ else
 	$(call rsync_to_dest,artifacts/proves/$*,$(BOARD_MOUNT_POINT))
 endif
 
+.PHONY: mount
+mount: ## Mount the board/device at ./rpi
+	@mkdir -p ./rpi
+	@echo "Mounting device $(DEVICE) to ./rpi..."
+	sudo mount -t vfat -o uid=$$(id -u),gid=$$(id -g),umask=022 $(DEVICE) ./rpi
+
 # install-circuit-python
 .PHONY: install-circuit-python
 install-circuit-python: arduino-cli circuit-python ## Install the Circuit Python onto a connected PROVES Kit
