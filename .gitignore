@@ -17,3 +17,4 @@ rpi/
 src/*/lib/*
 !src/*/lib/requirements.txt
 !src/flight-software/lib/proveskit_rp2040_v4/
+!src/flight-software/lib/arducam/
