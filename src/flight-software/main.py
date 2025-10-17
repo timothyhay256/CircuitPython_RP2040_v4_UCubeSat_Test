@@ -1,6 +1,7 @@
 # This is where the magic happens!
 # This file is executed on every boot (including wake-boot from deepsleep)
 # Created By: Michael Pham
+# Modified By: UCubeSat
 
 """
 Built for the PySquared FC Board
@@ -21,21 +22,16 @@ try:
 except ImportError:
     import board
 
+# SD card
+# Arducam imports
+from Arducam.Arducam import OV2640, ArducamClass, OV2640_1600x1200
 from lib.proveskit_rp2040_v4.register import Register
-from lib.pysquared.beacon import Beacon
-from lib.pysquared.cdh import CommandDataHandler
 from lib.pysquared.config.config import Config
 from lib.pysquared.hardware.busio import _spi_init, initialize_i2c_bus
-from lib.pysquared.hardware.digitalio import initialize_pin
-from lib.pysquared.hardware.imu.manager.lsm6dsox import LSM6DSOXManager
-from lib.pysquared.hardware.magnetometer.manager.lis2mdl import LIS2MDLManager
-from lib.pysquared.hardware.radio.manager.rfm9x import RFM9xManager
-from lib.pysquared.hardware.radio.packetizer.packet_manager import PacketManager
+from lib.pysquared.hardware.sd_card.manager.sd_card import SDCardManager
 from lib.pysquared.logger import Logger, LogLevel
 from lib.pysquared.nvm.counter import Counter
 from lib.pysquared.rtc.manager.microcontroller import MicrocontrollerManager
-from lib.pysquared.sleep_helper import SleepHelper
-from lib.pysquared.watchdog import Watchdog
 from version import __version__
 
 boot_time: float = time.time()
@@ -58,13 +54,14 @@ logger.info(
 )
 
 try:
-    loiter_time: int = 5
-    for i in range(loiter_time):
-        logger.info(f"Code Starting in {loiter_time-i} seconds")
-        time.sleep(1)
+    # loiter_time: int = 5
+    # for i in range(loiter_time):
+    # logger.info(f"Code Starting in {loiter_time-i} seconds")
+    # time.sleep(1)
+    logger.info("Code starting")
 
-    watchdog = Watchdog(logger, board.WDT_WDI)
-    watchdog.pet()
+    # watchdog = Watchdog(logger, board.WDT_WDI)
+    # watchdog.pet()
 
     logger.debug("Initializing Config")
     config: Config = Config("config.json")
@@ -72,53 +69,93 @@ try:
     # TODO(nateinaction): fix spi init
     spi0: SPI = _spi_init(
         logger,
-        board.SPI0_SCK,
-        board.SPI0_MOSI,
-        board.SPI0_MISO,
+        board.GP18,  # SCK
+        board.GP19,  # MOSI
+        board.GP16,  # MISO
     )
+    sd_cs = board.GP17
+    sd_baudrate = 400000
 
-    radio = RFM9xManager(
-        logger,
-        config.radio,
-        spi0,
-        initialize_pin(logger, board.SPI0_CS0, digitalio.Direction.OUTPUT, True),
-        initialize_pin(logger, board.RF1_RST, digitalio.Direction.OUTPUT, True),
-    )
+    logger.debug("Mounting SD card")
+    try:
+        sd_manager = SDCardManager(
+            spi_bus=spi0, chip_select=sd_cs, baudrate=sd_baudrate
+        )
+        logger.debug("Succesfully mounted SD card")
 
-    packet_manager = PacketManager(
-        logger,
-        radio,
-        config.radio.license,
-        Counter(Register.message_count),
-        0.2,
-    )
+    except Exception as e:
+        logger.critical("Failed to mount microSD card", e)
+
+    # with open("/sd/test.txt", "w") as f:
+    # f.write("Hello world!\r\n")
+
+    # radio = RFM9xManager(
+    #     logger,
+    #     config.radio,
+    #     spi0,
+    #     initialize_pin(logger, board.SPI0_CS0, digitalio.Direction.OUTPUT, True),
+    #     initialize_pin(logger, board.RF1_RST, digitalio.Direction.OUTPUT, True),
+    # )
+
+    # packet_manager = PacketManager(
+    #     logger,
+    #     radio,
+    #     config.radio.license,
+    #     Counter(Register.message_count),
+    #     0.2,
+    # )
 
     i2c1 = initialize_i2c_bus(
         logger,
-        board.I2C1_SCL,
-        board.I2C1_SDA,
+        board.GP9,
+        board.GP8,
         100000,
     )
 
-    magnetometer = LIS2MDLManager(logger, i2c1)
+    logger.debug("Initializing camera")
+    cam_cs = digitalio.DigitalInOut(board.GP5)
+    cam_cs.direction = digitalio.Direction.OUTPUT
 
-    imu = LSM6DSOXManager(logger, i2c1, 0x6B)
+    cam_cs.value = False
 
-    sleep_helper = SleepHelper(logger, config, watchdog)
+    try:
+        cam = ArducamClass(OV2640, spi=spi0, cs_pin=cam_cs, i2c=i2c1)
+        cam.Camera_Detection()
+        cam.Spi_Test()
+        cam.Camera_Init()
+        cam.clear_fifo_flag()
+        cam.OV2640_set_JPEG_size(OV2640_1600x1200)  # TODO: Make configurable
+        cam.spi.unlock()
+    except Exception as e:
+        logger.critical("Failed to initialize camera", e)
 
-    cdh = CommandDataHandler(logger, config, packet_manager)
+    if not cam.Camera_Detection():
+        logger.critical("Camera not detected")
 
-    beacon = Beacon(
-        logger,
-        config.cubesat_name,
-        packet_manager,
-        boot_time,
-        imu,
-        magnetometer,
-        radio,
-        error_count,
-        boot_count,
-    )
+    logger.info("Taking test image")
+
+    bytes_written = cam.capture_image_buffered(logger, file_path="/sd/sample-image.jpg")
+    logger.info(f"Done. {bytes_written} bytes written to SD.")
+
+    # magnetometer = LIS2MDLManager(logger, i2c1)
+
+    # imu = LSM6DSOXManager(logger, i2c1, 0x6B)
+
+    # sleep_helper = SleepHelper(logger, config, watchdog)
+
+    # cdh = CommandDataHandler(logger, config, packet_manager)
+
+    # beacon = Beacon(
+    #     logger,
+    #     config.cubesat_name,
+    #     packet_manager,
+    #     boot_time,
+    #     imu,
+    #     magnetometer,
+    #     radio,
+    #     error_count,
+    #     boot_count,
+    # )
 
     def nominal_power_loop():
         logger.debug(
@@ -126,15 +163,15 @@ try:
             bytes_remaining=gc.mem_free(),
         )
 
-        packet_manager.send(config.radio.license.encode("utf-8"))
+        # packet_manager.send(config.radio.license.encode("utf-8"))
 
-        beacon.send()
+        # beacon.send()
 
-        cdh.listen_for_commands(10)
+        # cdh.listen_for_commands(10)
 
-        beacon.send()
+        # beacon.send()
 
-        cdh.listen_for_commands(config.sleep_duration)
+        # cdh.listen_for_commands(config.sleep_duration)
 
     try:
         logger.info("Entering main loop")
