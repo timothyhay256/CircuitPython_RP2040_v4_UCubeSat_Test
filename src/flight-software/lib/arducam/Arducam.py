@@ -1,10 +1,10 @@
 # Trimmed down to only support OV2640
+import gc
 import time as utime
 
-import bitbangio
-import board
-import busio
 import digitalio
+from pysquared.hardware.exception import HardwareInitializationError
+from pysquared.logger import Logger
 
 from . import OV2640_reg
 
@@ -153,30 +153,35 @@ RAW = 2
 
 
 class ArducamClass(object):
-    def __init__(self, Type):
-        self.CameraMode = JPEG
+    def __init__(self, Type, spi, cs_pin, i2c, i2c_address=0x30):  # TODO: use logger
         self.CameraType = Type
-        self.SPI_CS = digitalio.DigitalInOut(board.GP5)
+        self.CameraMode = JPEG
+        self.spi = spi
+        self.SPI_CS = cs_pin
+        self.i2c = i2c
+        self.I2cAddress = i2c_address
         self.SPI_CS.direction = digitalio.Direction.OUTPUT
-        self.I2cAddress = 0x30
-        self.spi = busio.SPI(clock=board.GP2, MOSI=board.GP3, MISO=board.GP4)
 
-        for attempt in range(10):
-            if self.spi.try_lock():
-                break
-            else:
-                utime.sleep(0.1)
-
+        # try_lock loop taken from PySquared
+        tries = 0
+        while not self.spi.try_lock():
+            if tries >= 200:
+                raise HardwareInitializationError(
+                    "Unable to lock spi bus to initialize camera."
+                )
+            tries += 1
+            utime.sleep(0)
         self.spi.configure(baudrate=4000000, polarity=0, phase=0, bits=8)
-        self.i2c = bitbangio.I2C(scl=board.GP9, sda=board.GP8, frequency=1000000)
 
-        for attempt in range(10):
-            if self.i2c.try_lock():
-                break
-            else:
-                utime.sleep(0.1)
+        tries = 0
+        while not self.i2c.try_lock():
+            if tries >= 200:
+                raise HardwareInitializationError(
+                    "Unable to lock i2c bus to initialize camera."
+                )
+            tries += 1
+            utime.sleep(0)
 
-        print(self.i2c.scan())
         self.Spi_write(0x07, 0x80)
         utime.sleep(0.1)
         self.Spi_write(0x07, 0x00)
@@ -190,7 +195,6 @@ class ArducamClass(object):
                 id_h = self.rdSensorReg8_8(0x0A)
                 id_l = self.rdSensorReg8_8(0x0B)
                 if (id_h == 0x26) and ((id_l == 0x40) or (id_l == 0x42)):
-                    print("CameraType is OV2640")
                     return True
                 else:
                     print("Can't find OV2640 module")
@@ -265,6 +269,124 @@ class ArducamClass(object):
             self.wrSensorRegs8_8(OV2640_reg.OV2640_320x240_JPEG)
         else:
             pass
+
+    def capture_image_buffered(
+        self, logger: Logger, file_path="/sd/capture.jpg", chunk_size=128, buffer_size=0
+    ):  # TODO: either always return 0 on failure or raise exception, be more careful with memory
+        """
+        Read image from Arducam FIFO in specified chunks, writing image to specified file_path.
+        Flushes the buffer once it is full.
+
+        Args:
+            logger: PySquared logger
+            file_path: Path to attempt writing image to
+            chunk_size: chunk size to read from FIFO buffer
+            buffer_size: Max size of buffer before deactivating camera in order to flush to microSD. Set to 0 to use a size of 1/2 remaining memory. If reamining memory is less than 100 bytes, bail out.
+
+        Returns:
+            total bytes written
+        """
+        self.SPI_CS_LOW()
+        tries = 0
+        while not self.spi.try_lock():
+            if tries >= 200:
+                raise HardwareInitializationError(
+                    "Unable to lock spi bus to initialize camera."
+                )
+            tries += 1
+            utime.sleep(0.01)
+
+        # Determine buffer size
+        if buffer_size == 0:
+            gc.collect()
+            buffer_size = int(gc.mem_free() / 4)
+
+            if buffer_size < 100:
+                logger.critical("buffer size is less than 100 bytes, bailing out")
+                return 0
+
+        # Start image capture
+        self.flush_fifo()
+        self.clear_fifo_flag()
+        self.start_capture()
+
+        tries = 0
+        while self.get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK) == 0:
+            if tries >= 150:
+                logger.critical("camera timed out waiting for succesful capture!")
+                return 0
+            tries += 1
+            utime.sleep(0.01)
+
+        img_len = self.read_fifo_length()
+
+        remaining = img_len
+        ram_buf = bytearray()
+        total = 0
+
+        logger.info(
+            f"Starting buffered FIFO read of {img_len} bytes with buffer size of {buffer_size}"
+        )
+
+        if img_len == 0:
+            logger.critical("img_len is 0! nothing to write.")
+            return 0
+        try:
+            self.SPI_CS_LOW()
+            self.set_fifo_burst()
+
+            while remaining > 0:
+                this_chunk = min(chunk_size, remaining, buffer_size - len(ram_buf))
+                chunk = bytearray(this_chunk)
+                self.spi.readinto(chunk)
+                remaining -= this_chunk
+                total += this_chunk
+                ram_buf.extend(chunk)
+
+                # Flush condition
+                if len(ram_buf) >= buffer_size or remaining == 0:
+                    # Deactivate camera before touching SD
+                    self.SPI_CS_HIGH()
+                    self.spi.unlock()
+
+                    # Attempt to actually write to microSD
+                    try:
+                        with open(file_path, "ab") as f:
+                            f.write(ram_buf)
+                            f.flush()
+                        logger.debug(
+                            f"Wrote {len(ram_buf)} bytes to SD (remaining {remaining})"
+                        )
+                    except OSError as e:
+                        logger.error(f"SD write failed: {e}")
+                        return total
+
+                    # Clear RAM buffer
+                    ram_buf = bytearray()
+
+                    # Reactivate camera if data remains
+                    if remaining > 0:
+                        if not self.spi.try_lock():
+                            logger.warning("Waiting for SPI bus to unlock...")
+                            while not self.spi.try_lock():
+                                utime.sleep(0.001)
+                        self.SPI_CS_LOW()
+                        self.set_fifo_burst()
+
+            # Cleanup camera
+            self.SPI_CS_HIGH()
+            if self.spi.try_lock():
+                self.clear_fifo_flag()
+                self.spi.unlock()
+        finally:
+            # Unlock SPI
+            self.SPI_CS_HIGH()
+            if self.spi.try_lock():
+                self.clear_fifo_flag()
+                self.spi.unlock()
+
+        logger.debug(f"Image capture completed, {total} bytes read")
+        return total
 
     def Spi_write(self, address, value):
         maskbits = 0x80
