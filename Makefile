@@ -71,6 +71,27 @@ mount: ## Mount the board/device at ./rpi
 	@echo "Mounting device $(DEVICE) to ./rpi..."
 	sudo mount -t vfat -o uid=$$(id -u),gid=$$(id -g),umask=022 $(DEVICE) ./rpi
 
+.PHONY: screen
+screen: ## Start a screen session on the first /dev/ttyACM* device
+	@DEVICE=$$(ls /dev/ttyACM* 2>/dev/null | head -n 1) ; \
+	if [ -n "$$DEVICE" ]; then \
+		echo "Starting screen on $$DEVICE at 115200 baud..."; \
+		screen $$DEVICE 115200; \
+	else \
+		echo "No /dev/ttyACM* device found."; \
+	fi
+
+.PHONY: auto-mount
+auto-mount: ## Mount the first 1M partition at ./rpi (and hope its the Pico)
+	@mkdir -p ./rpi
+	@DEVICE=$$(lsblk -b -o NAME,SIZE -ln | awk '$$2==1048576 {print "/dev/"$$1; exit}') ; \
+	if [ -n "$$DEVICE" ]; then \
+		echo "Mounting $$DEVICE to ./rpi..."; \
+		sudo mount -t vfat -o uid=$$(id -u),gid=$$(id -g),umask=022 $$DEVICE ./rpi; \
+	else \
+		echo "No 1M partition found."; \
+	fi
+
 # install-circuit-python
 .PHONY: install-circuit-python
 install-circuit-python: arduino-cli circuit-python ## Install the Circuit Python onto a connected PROVES Kit
