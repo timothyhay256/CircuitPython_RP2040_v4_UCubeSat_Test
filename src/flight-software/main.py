@@ -125,6 +125,7 @@ try:
         cam.Camera_Init()
         cam.clear_fifo_flag()
         cam.OV2640_set_JPEG_size(OV2640_1600x1200)  # TODO: Make configurable
+        cam.spi.unlock()
     except Exception as e:
         logger.critical("Failed to initialize camera", e)
 
@@ -133,7 +134,7 @@ try:
 
     logger.info("Taking test image")
 
-    bytes_written = cam.capture_image_buffered(logger, file_path="/sd/test.jpg")
+    bytes_written = cam.capture_image_buffered(logger, file_path="/sd/sample-image.jpg")
     logger.info(f"Done. {bytes_written} bytes written to SD.")
 
     # magnetometer = LIS2MDLManager(logger, i2c1)
